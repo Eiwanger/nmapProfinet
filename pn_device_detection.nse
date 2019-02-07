@@ -85,13 +85,33 @@ end
 
 parse_pndcp = function(eth_data, pn_data)
 local pos = 7	-- start after the destination mac address (is mine)
-local data
 local deviceMacAddress
-pos, deviceMacAddress = bin.unpack("CCCCCC"ethData, pos)
+ 
+-- extract device mac address
+pos, deviceMacAddress = bin.unpack("HC",eth_data, pos)
+local tmp = deviceMacAddress
+
+for pos = 8, 12, 1 do
+_, deviceMacAddress = bin.unpack("HC",eth_data, pos)
+tmp = tmp.. ':' .. deviceMacAddress
+
+print("Pos and tmp\n")
 print(pos)
+
+end
+deviceMacAddress = tmp
 print(deviceMacAddress)
 
 
+-- start extrating data from pn_dcp_response -- start with 1
+pos = 11
+local ip_address, --[[subnetmask,]] vendorId, deviceId, deviceRole, nameOfStation, dcpDataLength
+_, dcpDataLength = bin.unpack("C", pn_data, pos)
+pos = pos +1
+pos, tmp = bin.unpack("C", pn_data, pos)
+  print("\n")
+  dcpDataLength = dcpDataLength + tmp
+  print(dcpDataLength)
 
 --[[
 pos, data = bin.unpack("", ethData, pos)
