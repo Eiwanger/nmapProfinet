@@ -29,56 +29,80 @@ if nmap.address_family() ~= 'inet' then
 	stdnse.print_debug("%s is IPv4 compatible only.", SCRIPT_NAME)
 	return false
 end
---[[
+
 if host.directly_connected == true and
-	host.mac_addr ~= nil and
 	host.mac_addr_src ~= nil and
 	host.interface ~= nil then
 		local iface = nmap.get_interface_info(host.interface)
+		print(iface)
+		print(iface.link)
 		if iface and iface.link == 'ethernet' then
 		stdnse.print_debug("%s runs right", SCRIPT_NAME)
 		return true
 		end
 	end
-stdnse.print_debug(host.directly_connected)
-stdnse.print_debug(host.mac_addr)
+	
+if(host.directly_connected) then 
+stdnse.print_debug("host directly connected true")
+end
+stdnse.print_debug("host mac address src: \n")
 stdnse.print_debug(host.mac_addr_src)
-
+stdnse.print_debug("host interface:\n")
 stdnse.print_debug(host.interface)
 stdnse.print_debug("%s runs bad\n\n", SCRIPT_NAME)
 	return false	
---]]
 
-return true
+
+--return true
 end
 
-pn_dcp_size = 46	-- min size of ethernet packet
-pn_dcp_multicast = "01:0E:CF:00:00:00" -- dcp multicast address
+local pn_dcp_multicast = "01:0e:cf:00:00:00"
+
 
 -- generate raw profinet identify all message
 build_eth_frame= function(host)
-	local packet = packet.Frame:new()
-	
+	local pn_dcp_size = 46	-- min size of ethernet packet
+	local eth_packet
 	local src_mac = host.mac_addr_src
 	local dest_mac = packet.mactobin(pn_dcp_multicast)
-	local eth_proto = bin.pack("S", 0x8892)
-	local blockData = bin.pack("SCCISCC", 0xfefe, 0x05,0x00,0x01000001, 0x0004, 0xff, 0xff)
+	local eth_proto = bin.pack("S", 0x9288)
+	-- short FrameID, char ServiceId, char ServiceType,  int Xid, short ResponseDelay, short Dcp datalength, 
+	-- char option, char suboption
+	-- lsb! 
+	local blockData = bin.pack("SCCISSCC", 0xfefe, 0x05,0x00,0x10000010, 0x0400, 0x0400,0xff, 0xff)
+	local padbyte = bin.pack("C", 0x00)
+	-- build the packet
+	eth_packet = dest_mac .. src_mac .. eth_proto .. blockData
+	local length = string.len(eth_packet)
 	
-	packet = Frame:build_ether_frame(dest_mac, src_mac, eth_proto, blockData)
-	return packet
+	-- fill the rest of the packet with 0x00 till ethernet min size is reached
+for  i = length, pn_dcp_size-1, 1 do
+
+		eth_packet = eth_packet .. padbyte
+end
+	return eth_packet
 end
 
-parse_pndcp = function(ethData)
-local pos = 14
+parse_pndcp = function(eth_data, pn_data)
+local pos = 7	-- start after the destination mac address (is mine)
 local data
+local deviceMacAddress
+pos, deviceMacAddress = bin.unpack("CCCCCC"ethData, pos)
+print(pos)
+print(deviceMacAddress)
+
+
+
+--[[
 pos, data = bin.unpack("", ethData, pos)
 if  data ~= 0xfeff then
-	return false, _  -- return if the packet is not a response
-end
+	return false  -- return if the packet is not a response
+end]]
 
 
+return true
 
-return true, dataTable	
+--return true, dataTable	
 end
 	
 	
@@ -86,19 +110,50 @@ end
 action = function(host)
  local dnet = nmap.new_dnet()
  local pcap_s = nmap.new_socket()
-
+ pcap_s:set_timeout(4000)
+ local timeout = 5000
  stdnse.print_debug("\n%s starts now\n", SCRIPT_NAME)
  print(host.interface)
  
---dnet:ethernet_open(host.interface)
- dnet:ethernet_open("wlp3s0")
- pcap_s.pcap_open(host.interface, 256, false, "ether proto 0x8892")
-
+dnet:ethernet_open(host.interface)
+ --dnet:ethernet_open("wlp3s0")
  
  local pn_dcp = build_eth_frame(host) -- get the frame we want to send
- try(dnet:ethernet_send(pn_dcp))	-- send the frame
+
+pcap_s:pcap_open(host.interface, 256, false, "ether proto 0x8892")
+ local status, ethData, length, pn_data
+ 
+  dnet:ethernet_send(pn_dcp)	-- send the frame
+ 
+ status, length, ethData, pn_data = pcap_s:pcap_receive()  -- first is my call
+ while status do
+ status, length, ethData, pn_data = pcap_s:pcap_receive()
+ 
+ if(status) then
+ print ("yes\n")
+ print (length)
+ print("ethData:")
+ print (ethData)
+ print ("pn_data:")
+ print (pn_data)
+ 
+parse_pndcp(ethData, pn_data)
+ 
+ else
+ print ("no\n")
+ end
+ end
+ --[[
+ if(status) then
+
+	parse_pndcp(ethData)
+ end
+ --]]
+
+
  dnet:ethernet_close();	-- close the sender
- stdnse.print_debug("\n%s ends now\n",SCRIPT_NAME)
+
+ 
  --[[
  local status, ethData, pnData
  status, _, ethdata, pnData = pcap:pcap_receive()  
@@ -109,15 +164,7 @@ action = function(host)
 	-- functioncall for parsing data
 	status,  = parse_pndcp(ethData)
 	--]]
+	
+	pcap_s:close()
+	 stdnse.print_debug("\n%s ends now\n",SCRIPT_NAME)
 end	
-	
-	
-	
-	
- 
- 
- 
- 
- 
- 
-	
