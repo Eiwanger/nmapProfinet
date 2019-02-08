@@ -84,47 +84,227 @@ end
 end
 
 parse_pndcp = function(eth_data, pn_data)
-local pos = 7	-- start after the destination mac address (is mine)
-local deviceMacAddress
- 
--- extract device mac address
-pos, deviceMacAddress = bin.unpack("HC",eth_data, pos)
-local tmp = deviceMacAddress
+	local pos = 7	-- start after the destination mac address (is mine)
+	local deviceMacAddress
+	 
+	-- extract device mac address
+	pos, deviceMacAddress = bin.unpack("HC",eth_data, pos)
+	local tmp = deviceMacAddress
 
-for pos = 8, 12, 1 do
-_, deviceMacAddress = bin.unpack("HC",eth_data, pos)
-tmp = tmp.. ':' .. deviceMacAddress
-
-print("Pos and tmp\n")
-print(pos)
-
-end
-deviceMacAddress = tmp
-print(deviceMacAddress)
+	for pos = 8, 12, 1 do
+		_, deviceMacAddress = bin.unpack("HC",eth_data, pos)
+		tmp = tmp.. ':' .. deviceMacAddress
+	end
+	deviceMacAddress = tmp
+	print(deviceMacAddress)
 
 
--- start extrating data from pn_dcp_response -- start with 1
-pos = 11
-local ip_address, --[[subnetmask,]] vendorId, deviceId, deviceRole, nameOfStation, dcpDataLength
-_, dcpDataLength = bin.unpack("C", pn_data, pos)
-pos = pos +1
-pos, tmp = bin.unpack("C", pn_data, pos)
-  print("\n")
-  dcpDataLength = dcpDataLength + tmp
-  print(dcpDataLength)
+	-- start extrating data from pn_dcp_response -- start with 1
+	pos = 11
+	local gesDCPDataLength = "" 
+	_, gesDCPDataLength = bin.unpack("C", pn_data, pos)
+	pos = pos +1
+	_, tmp = bin.unpack("C", pn_data, pos)
+	print("\n")
+	gesDCPDataLength = gesDCPDataLength + tmp
+	print("gesBlockLength: "..gesDCPDataLength)
+	  
+	-- extract data from DCP block
 
---[[
-pos, data = bin.unpack("", ethData, pos)
-if  data ~= 0xfeff then
-	return false  -- return if the packet is not a response
-end]]
+	local option, suboption
+	local IP, deviceVendorValue, deviceRole, deviceId, nameofstation, dcpDatalength, subnetmask, standardGateway, vendorId = "", "", "", "", "", "", "", "", ""
+	print("Pos: "..pos)
+	while(pos < gesDCPDataLength) do
 
+		pos = pos +1
+		_,option = bin.unpack("C", pn_data, pos)
+		pos = pos + 1
+		_, suboption = bin.unpack("C", pn_data, pos)
 
-return true
+	
+		print("\noption: "..option)
+		
+		print("\nsuboption: "..suboption)
+		--[[
+		if option == 0x02 then 
+		print("\nhex works")
+		end
+		if option == 2 then
+			print("dec works")
+		end
+		if option == 02 then
+			print("0 dec works\n")
+		end
+		--]]
+		
+		if option == 1 then -- IP
+			if(suboption == 2) then
+				pos = pos + 1
+				_,dcpDataLength = bin.unpack("C", pn_data, pos)
+				pos = pos +1
+				_, tmp = bin.unpack("C", pn_data, pos)
+				dcpDataLength = dcpDataLength + tmp
+				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
+				local endofIP = pos + 2 + 4
+				
+				for pos = pos + 2, endofIP, 1 do  -- get ip address
+					_, tmp = bin.unpack("C",pn_data, pos)
+					IP = IP .. "." .. tmp
+				end
+				pos = pos +endofIP
+				--  subnetmask
+				endofIP = endofIP + 4
+				for pos = pos, endofIP, 1 do  -- get subnetmask
+					_, tmp = bin.unpack("C",pn_data, pos)
+					subnetmask = subnetmask .. "." .. tmp
+				end
+				pos = pos +endofIP
+				--  standard gateway
+					endofIP = endofIP + 4
+				for pos = pos, endofIP, 1 do  -- get standardgateway
+					_, tmp = bin.unpack("C",pn_data, pos)
+					standardGateway = standardGateway .. "." .. tmp
+				end
+				pos = pos +endofIP
+				
+				IP = string.sub(IP,2)
+				--subnetmask = string.sub(subnetmask,2)
+				--standardGateway = string.sub(standardGateway,2)
+				-- todo find error in gateway and subnetmask
+				if dcpDataLength%2 ~= 0 then
+					pos = pos +1 -- add padding
+				end
+				print("IP:" ,IP)
+				print("subnetmask:", subnetmask)
+				print("gateway:", standardGateway)
+			end
+		elseif option == 2 then -- device properties
+			if suboption == 1 then-- deviceVendorValue  manufacturer specific option
+				pos = pos + 1
+				_,dcpDataLength = bin.unpack("C", pn_data, pos)
+				pos = pos +1
+				_, tmp = bin.unpack("C", pn_data, pos)
+				dcpDataLength = dcpDataLength + tmp
+				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
+				local size = pos + dcpDataLength
+				print("pos: ", pos)
+				print("size:" ,size)
+				for pos = pos + 3, size, 1 do
+					_, tmp = bin.unpack("C",pn_data, pos)
+					print("dvendor value: ", string.char(tmp))
+					deviceVendorValue = deviceVendorValue .. string.char(tmp)
+				end
+				--print("pos before add size", pos)
+				pos = size
+				if dcpDataLength%2 ~= 0 then
+					pos = pos +1 -- add padding
+				end
+				
+				print("\ndeviceVendorValue: ", deviceVendorValue)
+				print("pos: ", pos)
+				
+
+			elseif suboption == 2 then -- nameofstation
+					-- get the length of the name
+				pos = pos + 1
+				_,dcpDataLength = bin.unpack("C", pn_data, pos)
+				pos = pos +1
+				_, tmp = bin.unpack("C", pn_data, pos)
+				dcpDataLength = dcpDataLength + tmp
+				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
+				local size = pos + dcpDataLength
+				for pos = pos + 2, size, 1 do
+					_, tmp = bin.unpack("C",pn_data, pos)
+					nameofstation = nameofstation .. string.char(tmp)
+				end
+				
+				if dcpDataLength%2 ~= 0 then
+					pos = pos +1 -- add padding
+				end
+				pos = size
+				print("\nNameofStation:", nameofstation)
+			
+			
+				
+			elseif suboption == 3 then -- device id, vendor Id
+				pos = pos + 1
+				_,dcpDataLength = bin.unpack("C", pn_data, pos)
+				pos = pos +1
+				_, tmp = bin.unpack("C", pn_data, pos)
+				dcpDataLength = dcpDataLength + tmp
+				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
+				
+				
+				local size = pos + 2 + 2
+				for pos = pos + 3, size, 1 do 
+					_, tmp = bin.unpack("HC",pn_data, pos)
+					vendorId = vendorId .. tmp
+				end
+				
+				pos = size +1
+				size = size + 2
+				
+				for pos = pos, size, 1 do 
+					_, tmp = bin.unpack("HC",pn_data, pos)
+					deviceId = deviceId .. tmp
+				end
+				pos = size
+				print("\nvendorId:")
+				print(vendorId)
+				print("\ndeviceId:")
+				print(deviceId)
+
+			elseif suboption == 4 then -- device role
+				pos = pos + 1
+				_,dcpDataLength = bin.unpack("C", pn_data, pos)
+				pos = pos +1
+				_, tmp = bin.unpack("C", pn_data, pos)
+				dcpDataLength = dcpDataLength + tmp
+				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
+				
+				pos = pos + 2 
+				_,deviceRole = bin.unpack("HC", pn_data, pos)
+				pos = pos + 2 -- add 0x00 reserved block
+				
+				print("\nDeviceRole:")
+				print(deviceRole)
+			else
+				print("\nelse device now\n")
+				pos = pos + 1
+				_,dcpDataLength = bin.unpack("C", pn_data, pos)
+				pos = pos +1
+				_, tmp = bin.unpack("C", pn_data, pos)
+				dcpDataLength = dcpDataLength + tmp
+				
+				pos = pos + dcpDataLength
+				if dcpDataLength%2 ~= 0 then
+					pos = pos +1 -- add padding
+				end
+				
+			end
+		else  
+			print("\nelse option now\n")
+			pos = pos + 1
+			_,dcpDataLength = bin.unpack("C", pn_data, pos)
+			
+			pos = pos +1
+			_, tmp = bin.unpack("C", pn_data, pos)
+			
+			dcpDataLength = dcpDataLength + tmp
+			print("dcpDataLength: ",dcpDataLength)
+			pos = pos + dcpDataLength
+			if dcpDataLength%2 ~= 0 then
+				pos = pos +1 -- add padding
+			end
+		
+		end -- close if
+		
+	end -- close while
+	return true
 
 --return true, dataTable	
 end
-	
+
 	
 
 action = function(host)
@@ -151,11 +331,6 @@ pcap_s:pcap_open(host.interface, 256, false, "ether proto 0x8892")
  
  if(status) then
  print ("yes\n")
- print (length)
- print("ethData:")
- print (ethData)
- print ("pn_data:")
- print (pn_data)
  
 parse_pndcp(ethData, pn_data)
  
@@ -187,4 +362,7 @@ parse_pndcp(ethData, pn_data)
 	
 	pcap_s:close()
 	 stdnse.print_debug("\n%s ends now\n",SCRIPT_NAME)
+	
+	 
+	 
 end	
