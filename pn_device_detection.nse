@@ -12,7 +12,9 @@ description = [[ This script checks if it is called in a ethernet subnet and if 
 
 ---
 -- @usage
---	nmap -- script pn_discovery
+--	nmap -e <interface> --script pn_discovery
+-- nmap --script pn_discovery
+
 
 -- @output
 --	pn_discovery:
@@ -45,36 +47,30 @@ author = "Stefan Eiwanger"
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 categories = {"discovery","info", "safe"}
 
+prerule = function()
+  if nmap.address_family() ~= 'inet' then
+    stdnse.debug1("is IPv4 compatible only.")
+    return false
+  end
 
-hostrule = function(host)
-	stdnse.print_debug("\n\n%s starts", SCRIPT_NAME)
-	if nmap.address_family() ~= 'inet' then
-		stdnse.print_debug("%s is IPv4 compatible only.", SCRIPT_NAME)
-	return false
-	end
-
-	if host.directly_connected == true and
-		host.mac_addr_src ~= nil and
-		host.interface ~= nil then
-		
-		local iface = nmap.get_interface_info(host.interface)
-		if iface and iface.link == 'ethernet' then
-			return true
-		end		
-	end
-	stdnse.print_debug("\n%s: Make sure targethost is in the local ethernet.\n", SCRIPT_NAME)
-
-	return false	
+  return true
 end
 
 local pn_dcp_multicast = "01:0e:cf:00:00:00"
 
 
 -- generate raw profinet identify all message
-build_eth_frame= function(host)
+--@param iface interface table containing mac address
+--@return eth_packet ethernet packet for sending over socket
+build_eth_frame= function(iface)
 	local pn_dcp_size = 46	-- min size of ethernet packet
 	local eth_packet
-	local src_mac = host.mac_addr_src
+	local src_mac = iface.mac
+	
+	--print (packet.mactobin(src_mac))
+	--print (iface.link)
+	--print (iface.device)
+	
 	local dest_mac = packet.mactobin(pn_dcp_multicast)
 	local eth_proto = bin.pack("S", 0x9288)
 	local blockData = bin.pack("SCCISSCC", 0xfefe, 0x05,0x00,0x10000010, 0x0400, 0x0400,0xff, 0xff)
@@ -95,6 +91,9 @@ build_eth_frame= function(host)
 end
 
 -- extract data from incoming dcp packets and store them into a table
+--@param eth_data ethernet part of the recieved packet
+--@param pn_data profinet part of the recieved packet == ethernet packetload
+--@return device table with all extraced data from the pn_dcp
 parse_pndcp = function(eth_data, pn_data)
 	local pos = 7	-- start after the destination mac address (is mine)
 	local deviceMacAddress
@@ -304,27 +303,56 @@ parse_pndcp = function(eth_data, pn_data)
 	device.vendorvalue = deviceVendorValue
 	device.deviceRole= deviceRole
 	device.nameOfStation = nameofstation
-	--local IP, deviceVendorValue, deviceRole, deviceId, nameofstation, dcpDatalength, subnetmask, standardGateway, vendorId
+	
 	return device
 end
 
-	
+-- get all possible interfaces
+--@param link  type of interface e.g. "ethernet"
+--@param up status of the interface 
+--@return result table with all interfaces which match the given requirements
+getInterfaces = function(link, up)
+  if( not(nmap.list_interfaces) ) then return end
+  local interfaces, err = nmap.list_interfaces()
+  local result = {}
 
-action = function(host)
+  if ( not(err) ) then
+    for _, iface in ipairs(interfaces) do
+		if ( iface.link == link and
+        iface.up == up and
+        iface.mac ) then
+			if #result == 0 then
+				table.insert(result, iface)
+			else 
+			local exists = false
+				for _, intface in ipairs(result) do
+					if intface.mac == iface.mac then
+						exists = true
+					end
+				end
+				if not exists then
+					table.insert(result, iface)
+				end
+			end	
+		end
+    end
+  end
+  return result
+end
+
+-- helpfunction for thread call
+--@param iface interface table
+--@param pn_dcp ethernet dcp packet to send 
+--@param devices table for results
+--@return devices, table with devices which answered to the dcp identify all call
+discoverThread = function(iface, pn_dcp, devices)
+	local condvar = nmap.condvar(devices)
 	local dnet = nmap.new_dnet()
 	local pcap_s = nmap.new_socket()
-	local output_tab = stdnse.output_table()
-	output_tab.devices = {}
 	pcap_s:set_timeout(4000)
-	--stdnse.print_debug("\n%s starts now\n", SCRIPT_NAME)
-	-- print(host.interface)
-	 
-	dnet:ethernet_open(host.interface)
-	 --dnet:ethernet_open("wlp3s0")
-	 
-	local pn_dcp = build_eth_frame(host) -- get the frame we want to send
-
-	pcap_s:pcap_open(host.interface, 256, false, "ether proto 0x8892")
+	dnet:ethernet_open(iface.device)
+	pcap_s:pcap_open(iface.device, 256, false, "ether proto 0x8892")
+	
 	local status, ethData, length, pn_data
 	 
 	dnet:ethernet_send(pn_dcp)	-- send the frame
@@ -334,13 +362,87 @@ action = function(host)
 		status, length, ethData, pn_data = pcap_s:pcap_receive()
 	 
 		if(status) then
-			output_tab.devices[#output_tab.devices + 1] = parse_pndcp(ethData, pn_data)
+			devices[#devices + 1] = parse_pndcp(ethData, pn_data)
 		end
 	end
-	dnet:ethernet_close();	-- close the sender
+	dnet:ethernet_close(iface.device);	-- close the sender
 
 	
 
-	pcap_s:close()
+	pcap_s:close(iface.device)
+condvar "signal"
+return devices
+end
+
+-- main fuction
+--@return 0 if no devices were found
+--@return output_tab table for nmap to show the gathered information
+action = function()
+	local interface_e = nmap.get_interface()
+	local interfaces = {}
+	
+	local output_tab = stdnse.output_table()
+	output_tab.devices = {}
+	
+	-- check interface parameter
+
+	local dnet = nmap.new_dnet()
+	local pcap_s = nmap.new_socket()
+	pcap_s:set_timeout(4000)
+	
+	 
+	if(interface_e) then -- interface supplied with -e
+		local iface = nmap.get_interface_info(interface_e)
+		if not (iface and iface.link == 'ethernet') then
+			stdnse.print_debug("%s not supported with %s", iface, SCRIPT_NAME)
+			return false
+		end		
+		table.insert(interfaces, iface)
+	else -- discover interfaces
+		interfaces = getInterfaces("ethernet", "up")
+	end
+	
+	-- check if at least one interface is available
+	if #interfaces == 0 then
+		stdnse.print_debug("No interfaces found")
+		return false
+	end
+	
+	-- get the frame we want to send
+	
+	
+	local threads = {}
+
+	local condvar = nmap.condvar(output_tab.devices)
+
+	
+	for _, iface in ipairs(interfaces) do
+		local pn_dcp = build_eth_frame(iface) 
+		--print(iface.device)
+	
+		local co = stdnse.new_thread(discoverThread, iface, pn_dcp, output_tab.devices)
+		threads[co] = true
+	end
+	
+	 -- wait for all threads to finish sniffing
+  repeat
+    for thread in pairs(threads) do
+      if coroutine.status(thread) == "dead" then
+        threads[thread] = nil
+      end
+    end
+    if ( next(threads) ) then
+      condvar "wait"
+    end
+  until next(threads) == nil
+
+	-- check the output if something is doubled there
+	if #output_tab.devices == 0 then
+		print("No profinet devices in the subnet")
+		return 0
+	end
+	
+
 	return output_tab
+	
 end	
