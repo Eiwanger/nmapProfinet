@@ -6,7 +6,7 @@ local bin = require "bin"
 local packet = require "packet"
 
 
-description = [[ This script checks if it is called in a ethernet subnet and if so, sends a 
+description = [[ This script sends a 
 	profinet dcp (discovery and configuration protocol) indetify all message
 	as a multicast through the subnet and print the answers into a table]]
 
@@ -102,6 +102,7 @@ parse_pndcp = function(eth_data, pn_data)
 		deviceRoleInterpretation [1] = "PNIO Controller"
 		deviceRoleInterpretation [2] = "PNIO Multidevice"
 		deviceRoleInterpretation [3] = "PNIO Supervisor"
+	
 	-- extract device mac address
 	pos, deviceMacAddress = bin.unpack("HC",eth_data, pos)
 	local tmp = deviceMacAddress
@@ -120,7 +121,8 @@ parse_pndcp = function(eth_data, pn_data)
 	_, gesDCPDataLength = bin.unpack("C", pn_data, pos)
 	pos = pos +1
 	_, tmp = bin.unpack("C", pn_data, pos)
-	gesDCPDataLength = gesDCPDataLength + tmp
+	--gesDCPDataLength = gesDCPDataLength + tmp
+	gesDCPDataLength = (gesDCPDataLength << 8) | tmp
 
 	  
 	-- extract data from DCP block
@@ -141,7 +143,8 @@ parse_pndcp = function(eth_data, pn_data)
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				dcpDataLength = dcpDataLength + tmp
+				--dcpDataLength = dcpDataLength + tmp
+				dcpDataLength = (dcpDataLength << 8) | tmp
 				
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
 				local endofIP = pos + 2 + 4
@@ -150,7 +153,7 @@ parse_pndcp = function(eth_data, pn_data)
 					_, tmp = bin.unpack("C",pn_data, pos)
 					IP = IP .. "." .. tmp
 				end
-				pos = pos + 6+ 1
+				pos = pos + 6 + 1
 				--  subnetmask
 				endofIP = endofIP + 4
 				for pos = pos, endofIP, 1 do  -- get subnetmask
@@ -170,11 +173,24 @@ parse_pndcp = function(eth_data, pn_data)
 				subnetmask = string.sub(subnetmask,2)
 				standardGateway = string.sub(standardGateway,2)
 				
-				
+				stdnse.debug(1, "Position at end of IP: %d", pos)
+				--[[if dcpDataLength%2 ~= 0 then
+					pos = pos +1 -- add padding
+				end
+				--]]
+			else
+			
+				pos = pos + 1
+				_,dcpDataLength = bin.unpack("C", pn_data, pos)
+				pos = pos +1
+				_, tmp = bin.unpack("C", pn_data, pos)
+				--dcpDataLength = dcpDataLength + tmp
+				dcpDataLength = (dcpDataLength << 8) | tmp
+				pos = pos + dcpDataLength
 				if dcpDataLength%2 ~= 0 then
 					pos = pos +1 -- add padding
 				end
-
+				
 			end
 		elseif option == 2 then -- device properties
 			if suboption == 1 then-- deviceVendorValue  manufacturer specific option
@@ -183,7 +199,10 @@ parse_pndcp = function(eth_data, pn_data)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
 				dcpDataLength = dcpDataLength + tmp
+				dcpDataLength = (dcpDataLength << 8) | tmp
+				
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
+				
 				local size = pos + dcpDataLength
 				
 				for pos = pos + 3, size, 1 do
@@ -197,7 +216,7 @@ parse_pndcp = function(eth_data, pn_data)
 					pos = pos +1 -- add padding
 				end
 
-				
+				print("Position devProperties", pos)
 
 			elseif suboption == 2 then -- nameofstation
 					-- get the length of the name
@@ -205,7 +224,9 @@ parse_pndcp = function(eth_data, pn_data)
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				dcpDataLength = dcpDataLength + tmp
+				--dcpDataLength = dcpDataLength + tmp
+				dcpDataLength = (dcpDataLength << 8) | tmp
+				
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
 				local size = pos + dcpDataLength
 				for pos = pos + 3, size, 1 do
@@ -219,7 +240,7 @@ parse_pndcp = function(eth_data, pn_data)
 				end
 				
 
-			
+			print("Position nameofStation", pos)
 			
 				
 			elseif suboption == 3 then -- device id, vendor Id
@@ -227,7 +248,8 @@ parse_pndcp = function(eth_data, pn_data)
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				dcpDataLength = dcpDataLength + tmp
+				--dcpDataLength = dcpDataLength + tmp
+				dcpDataLength = (dcpDataLength << 8) | tmp
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
 				
 				
@@ -245,14 +267,15 @@ parse_pndcp = function(eth_data, pn_data)
 					deviceId = deviceId .. tmp
 				end
 				pos = size
-
+				print("Position end devID, vendID", pos)
 
 			elseif suboption == 4 then -- device role
 				pos = pos + 1
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				dcpDataLength = dcpDataLength + tmp
+				--dcpDataLength = dcpDataLength + tmp
+					dcpDataLength = (dcpDataLength << 8) | tmp
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
 				
 				pos = pos + 2 
@@ -260,13 +283,14 @@ parse_pndcp = function(eth_data, pn_data)
 				pos = pos + 2 -- add 0x00 reserved block
 				
 				deviceRole = deviceRoleInterpretation[deviceRole] .. ' 0x0' .. deviceRole
-
+print("Position devRole", pos)
 			else
 			
 				pos = pos + 1
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
+				dcpDataLength = (dcpDataLength << 8) | tmp
 				dcpDataLength = dcpDataLength + tmp
 				
 				pos = pos + dcpDataLength
@@ -282,8 +306,8 @@ parse_pndcp = function(eth_data, pn_data)
 			pos = pos +1
 			_, tmp = bin.unpack("C", pn_data, pos)
 			
-			dcpDataLength = dcpDataLength + tmp
-			
+			--dcpDataLength = dcpDataLength + tmp
+			dcpDataLength = (dcpDataLength<<8) | tmp
 			pos = pos + dcpDataLength
 			if dcpDataLength%2 ~= 0 then
 				pos = pos +1 -- add padding
