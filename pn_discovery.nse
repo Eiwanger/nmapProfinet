@@ -63,19 +63,26 @@ local pn_dcp_multicast = "01:0e:cf:00:00:00"
 --@param iface interface table containing mac address
 --@return eth_packet ethernet packet for sending over socket
 build_eth_frame= function(iface)
+	
+	stdnse.debug(1, "Build packet for dcp identify all call.")
+	stdnse.debug(1, "Interface: " .. iface.device)
 	local pn_dcp_size = 46	-- min size of ethernet packet
 	local eth_packet
 	local src_mac = iface.mac
 	
-	--print (packet.mactobin(src_mac))
-	--print (iface.link)
-	--print (iface.device)
+	
+
+	
+	
+
+	
 	
 	local dest_mac = packet.mactobin(pn_dcp_multicast)
 	local eth_proto = bin.pack("S", 0x9288)
 	local blockData = bin.pack("SCCISSCC", 0xfefe, 0x05,0x00,0x10000010, 0x0400, 0x0400,0xff, 0xff)
 	local padbyte = bin.pack("C", 0x00)
-	
+
+
 	
 		
 	-- build the packet
@@ -90,12 +97,15 @@ build_eth_frame= function(iface)
 	return eth_packet
 end
 
+
+
 -- extract data from incoming dcp packets and store them into a table
 --@param eth_data ethernet part of the recieved packet
 --@param pn_data profinet part of the recieved packet == ethernet packetload
 --@return device table with all extraced data from the pn_dcp
 parse_pndcp = function(eth_data, pn_data)
-	local pos = 7	-- start after the destination mac address (is mine)
+	stdnse.debug(1, "Start parsing of answer")
+	local pos = 7	-- start after the destination mac address (host)
 	local deviceMacAddress
 	local deviceRoleInterpretation = {} 
 		deviceRoleInterpretation [0] = "PNIO Device"
@@ -104,15 +114,32 @@ parse_pndcp = function(eth_data, pn_data)
 		deviceRoleInterpretation [3] = "PNIO Supervisor"
 	
 	-- extract device mac address
+
+
+
+
 	pos, deviceMacAddress = bin.unpack("HC",eth_data, pos)
 	local tmp = deviceMacAddress
+
+
+--[[ creates a nil value for deviceMacAddress
+for i = 0, 4, 1 do
+pos, deviceMacAddress = bin.unpack("HC",eth_data, pos)
+tmp = tmp .. ':'..deviceMacAddress
+print(pos)
+print(tmp)
+end
+--]]
+
+
 
 	for pos = 8, 12, 1 do
 		_, deviceMacAddress = bin.unpack("HC",eth_data, pos)
 		tmp = tmp.. ':' .. deviceMacAddress
 	end
 	deviceMacAddress = tmp
-
+	
+	stdnse.debug(1, "Device MAC address: %s", deviceMacAddress)
 
 
 	-- start extrating data from pn_dcp_response -- start with 1
@@ -121,14 +148,14 @@ parse_pndcp = function(eth_data, pn_data)
 	_, gesDCPDataLength = bin.unpack("C", pn_data, pos)
 	pos = pos +1
 	_, tmp = bin.unpack("C", pn_data, pos)
-	--gesDCPDataLength = gesDCPDataLength + tmp
-	gesDCPDataLength = (gesDCPDataLength << 8) | tmp
-
+	gesDCPDataLength = gesDCPDataLength + tmp
+	--gesDCPDataLength = (gesDCPDataLength << 8) | tmp
+	stdnse.debug(1,"DCP Datalength of full packet: %d", gesDCPDataLength)
 	  
 	-- extract data from DCP block
 	local option, suboption
 	local IP, deviceVendorValue, deviceRole, deviceId, nameofstation, dcpDatalength, subnetmask, standardGateway, vendorId = "", "", "", "", "", "", "", "", ""
-
+	stdnse.debug(1, "Start extracting data from DCP block")
 	while(pos < gesDCPDataLength) do
 
 		pos = pos +1
@@ -139,143 +166,173 @@ parse_pndcp = function(eth_data, pn_data)
 		if option == 1 then -- IP
 			if(suboption == 2) then
 				pos = pos + 1				
-				
+				stdnse.debug(1, "Option IP, suboption IP")
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				--dcpDataLength = dcpDataLength + tmp
-				dcpDataLength = (dcpDataLength << 8) | tmp
+				dcpDataLength = dcpDataLength + tmp
+				stdnse.debug(1,"DCP Datalength of IP/IP %d", dcpDataLength)
+				--dcpDataLength = (dcpDataLength << 8) | tmp
 				
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
 				local endofIP = pos + 2 + 4
 				
-				for pos = pos + 3, endofIP, 1 do  -- get ip address
-					_, tmp = bin.unpack("C",pn_data, pos)
+				stdnse.debug(1, "Position at start of IP address: %d", pos)
+				for currentPos = pos + 3, endofIP, 1 do  -- get ip address
+					_, tmp = bin.unpack("C",pn_data, currentPos)
 					IP = IP .. "." .. tmp
 				end
 				pos = pos + 6 + 1
+				
+				IP = string.sub(IP,2)
+				stdnse.debug(1, "IP address: %s", IP)
+				stdnse.debug(1, "Position at end of IP address: %d", pos)
 				--  subnetmask
 				endofIP = endofIP + 4
-				for pos = pos, endofIP, 1 do  -- get subnetmask
-					_, tmp = bin.unpack("C",pn_data, pos)
+					stdnse.debug(1, "Position at start of subnetmask: %d", pos)
+				for currentPos = pos, endofIP, 1 do  -- get subnetmask
+					_, tmp = bin.unpack("C",pn_data, currentPos)
 					subnetmask = subnetmask .. "." .. tmp
 				end
 				pos = pos + 4
+				
+				subnetmask = string.sub(subnetmask,2)
+				stdnse.debug(1, "Subnetmask: %s", subnetmask)
+				stdnse.debug(1, "Position at end of subnetmask: %d", pos)
+				
 				--  standard gateway
-					endofIP = endofIP + 4
-				for pos = pos, endofIP, 1 do  -- get standardgateway
-					_, tmp = bin.unpack("C",pn_data, pos)
+				endofIP = endofIP + 4
+				stdnse.debug(1, "Position at start of default gateway: %d", pos)
+				for currentPos = pos, endofIP, 1 do  -- get standardgateway
+					_, tmp = bin.unpack("C",pn_data, currentPos)
 					standardGateway = standardGateway .. "." .. tmp
 				end
-				pos = pos + 4
 				
-				IP = string.sub(IP,2)
-				subnetmask = string.sub(subnetmask,2)
+				pos = endofIP
+				
+				
 				standardGateway = string.sub(standardGateway,2)
 				
+				stdnse.debug(1, "Default gateway: %s", standardGateway)
+				stdnse.debug(1, "Position at end of default gateway: %d", pos)
+			
+			
+				
+				
 				stdnse.debug(1, "Position at end of IP: %d", pos)
+				
 				--[[if dcpDataLength%2 ~= 0 then
 					pos = pos +1 -- add padding
 				end
 				--]]
 			else
-			
+			stdnse.debug(1, "Option IP, suboption something else: %d", suboption)
 				pos = pos + 1
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				--dcpDataLength = dcpDataLength + tmp
-				dcpDataLength = (dcpDataLength << 8) | tmp
+				dcpDataLength = dcpDataLength + tmp
+				--dcpDataLength = (dcpDataLength << 8) | tmp
+				stdnse.debug(1, "DCP datalength of IP/else: %d", dcpDataLength)
 				pos = pos + dcpDataLength
+				
 				if dcpDataLength%2 ~= 0 then
+					stdnse.debug(1, "dcpDatalength was odd, add padding +1 to pos")
 					pos = pos +1 -- add padding
 				end
 				
 			end
 		elseif option == 2 then -- device properties
 			if suboption == 1 then-- deviceVendorValue  manufacturer specific option
+				stdnse.debug(1, "Option device properties, suboption manufacturer specific")
 				pos = pos + 1
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
 				dcpDataLength = dcpDataLength + tmp
-				dcpDataLength = (dcpDataLength << 8) | tmp
+				--dcpDataLength = (dcpDataLength << 8) | tmp
 				
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
 				
-				local size = pos + dcpDataLength
+				local endOfVal = pos + dcpDataLength
 				
-				for pos = pos + 3, size, 1 do
+				for pos = pos + 3, endOfVal, 1 do
 					_, tmp = bin.unpack("C",pn_data, pos)
 					
 					deviceVendorValue = deviceVendorValue .. string.char(tmp)
 				end
 				
-				pos = size
+				pos = endOfVal
 				if dcpDataLength%2 ~= 0 then
+				stdnse.debug(1, "dcpDatalength was odd, add padding +1 to pos")
 					pos = pos +1 -- add padding
 				end
 
-				print("Position devProperties", pos)
+				
 
 			elseif suboption == 2 then -- nameofstation
 					-- get the length of the name
+					stdnse.debug(1, "Option device properties, suboption name of station")
 				pos = pos + 1
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				--dcpDataLength = dcpDataLength + tmp
-				dcpDataLength = (dcpDataLength << 8) | tmp
+				dcpDataLength = dcpDataLength + tmp
+				--dcpDataLength = (dcpDataLength << 8) | tmp
 				
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
-				local size = pos + dcpDataLength
-				for pos = pos + 3, size, 1 do
+				local endOfVal = pos + dcpDataLength
+				for pos = pos + 3, endOfVal, 1 do
 					_, tmp = bin.unpack("C",pn_data, pos)
 					nameofstation = nameofstation .. string.char(tmp)
 				end
 				
-				pos = size
+				pos = endOfVal
 				if dcpDataLength%2 ~= 0 then
+				stdnse.debug(1, "dcpDatalength was odd, add padding +1 to pos")
 					pos = pos +1 -- add padding
 				end
 				
 
-			print("Position nameofStation", pos)
+	
 			
 				
 			elseif suboption == 3 then -- device id, vendor Id
+				stdnse.debug(1, "Option device properties, suboption device ID")
+				
 				pos = pos + 1
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				--dcpDataLength = dcpDataLength + tmp
-				dcpDataLength = (dcpDataLength << 8) | tmp
+				dcpDataLength = dcpDataLength + tmp
+				--dcpDataLength = (dcpDataLength << 8) | tmp
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
 				
 				
-				local size = pos + 2 + 2
-				for pos = pos + 3, size, 1 do 
+				local endOfVal = pos + 2 + 2
+				for pos = pos + 3, endOfVal, 1 do 
 					_, tmp = bin.unpack("HC",pn_data, pos)
 					vendorId = vendorId .. tmp
 				end
 				
-				pos = size +1
-				size = size + 2
+				pos = endOfVal +1
+				endOfVal = endOfVal + 2
 				
-				for pos = pos, size, 1 do 
+				for pos = pos, endOfVal, 1 do 
 					_, tmp = bin.unpack("HC",pn_data, pos)
 					deviceId = deviceId .. tmp
 				end
-				pos = size
-				print("Position end devID, vendID", pos)
+				pos = endOfVal
+
 
 			elseif suboption == 4 then -- device role
+				stdnse.debug(1, "Option device properties, suboption device role")
 				pos = pos + 1
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				--dcpDataLength = dcpDataLength + tmp
-					dcpDataLength = (dcpDataLength << 8) | tmp
+				dcpDataLength = dcpDataLength + tmp
+				--dcpDataLength = (dcpDataLength << 8) | tmp
 				--pos = pos + 2 -- first 2 byte are blockinfo therefore not important
 				
 				pos = pos + 2 
@@ -283,33 +340,36 @@ parse_pndcp = function(eth_data, pn_data)
 				pos = pos + 2 -- add 0x00 reserved block
 				
 				deviceRole = deviceRoleInterpretation[deviceRole] .. ' 0x0' .. deviceRole
-print("Position devRole", pos)
+				
 			else
-			
+			stdnse.debug(1, "Option device properties, suboption something else: %d", suboption)
 				pos = pos + 1
 				_,dcpDataLength = bin.unpack("C", pn_data, pos)
 				pos = pos +1
 				_, tmp = bin.unpack("C", pn_data, pos)
-				dcpDataLength = (dcpDataLength << 8) | tmp
+				--dcpDataLength = (dcpDataLength << 8) | tmp
 				dcpDataLength = dcpDataLength + tmp
 				
 				pos = pos + dcpDataLength
 				if dcpDataLength%2 ~= 0 then
+				stdnse.debug(2, "dcpDatalength was odd, add padding +1 to pos")
 					pos = pos +1 -- add padding
 				end
 				
 			end
 		else  
+			stdnse.debug(1, "Option something else: %d", option)
 			pos = pos + 1
 			_,dcpDataLength = bin.unpack("C", pn_data, pos)
 			
 			pos = pos +1
 			_, tmp = bin.unpack("C", pn_data, pos)
 			
-			--dcpDataLength = dcpDataLength + tmp
-			dcpDataLength = (dcpDataLength<<8) | tmp
+			dcpDataLength = dcpDataLength + tmp
+			--dcpDataLength = (dcpDataLength<<8) | tmp
 			pos = pos + dcpDataLength
 			if dcpDataLength%2 ~= 0 then
+			stdnse.debug(1, "dcpDatalength was odd, add padding +1 to pos")
 				pos = pos +1 -- add padding
 			end
 		
@@ -327,6 +387,8 @@ print("Position devRole", pos)
 	device.vendorvalue = deviceVendorValue
 	device.deviceRole= deviceRole
 	device.nameOfStation = nameofstation
+	
+	stdnse.debug(1, "End of parsing\n")
 	
 	return device
 end
@@ -428,7 +490,7 @@ action = function()
 	
 	-- check if at least one interface is available
 	if #interfaces == 0 then
-		stdnse.print_debug("No interfaces found")
+		print("No interfaces found")
 		return false
 	end
 	
