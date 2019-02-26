@@ -111,7 +111,8 @@ end
 
 
 function ByteCRC(sum, data)
-    sum = sum ~ data
+ 
+   sum = sum ~ data
     for i = 0, 7 do     -- lua for loop includes upper bound, so 7, not 8
         if ((sum & 1) == 0) then
             sum = sum >> 1
@@ -134,130 +135,99 @@ end
 
 
 
-calcCheckSum  =function(data)
+buildPacket = function(host, typeData)
+	--[[local ippackt = packet.Frame:new()
+	local udppackt = packet.Frame:new()
+	local rpcpackt = packet.Frame:new()
+	--]]
 
-local i , checksum = 0
+	local ippackt, udppackt, rpcpackt
 
-	for i = 0, 19, 2 do
+	print(typeData.sport)
+	--[[ version 4
+	ippackt:ip_set_bin_dst(host.ip)
+	ippackt:ip_set_bin_src(host.bin_ip_src)
+	ippackt:ip_set_hl(5) -- default ip header
+	ippackt:ip_set_id(typeData[ident_nmb])
+	ippackt:ip_set_len(typeData[ipLength])
+	 may checksum / lets see later
+	--]]
 
-		local tmp = data[i] << 8 | data[i+1] 
+	--[[
+	udppackt:udp_set_sport(typeData.sport)
+	udppackt:udp_set_dport(typeData.dport)
+	udppackt:udp_set_length(typeData.udpLength)
+	--]]
 
-		local diff = 65535 - checksum
-
-		checksum =checksum + tmp
+	udppackt = stdnse.tohex(typeData.sport) .. stdnse.tohex(typeData.dport) .. stdnse.tohex(typeData.udpLength)
 
 
 
-		if tmp > diff then 
-			checksum = checksum +1 
-		end
+
+	rpcpackt = stdnse.fromhex("04" .. "00" .. "2000" .. "100000" .. "00" .. "00000000000000000000000000000000" .. "0883afe11f5dc91191a408002b14a0fa" .. "01000000010001000100000100010001" .. "00000000" .."03000000" ..
+	"03000000" .. "0200" .. "ffff" .. "ffff" .. "4c00" .. "0000" .. "00" .. "00" .. "00000000" .. "01000000" .. "00000000000000000000000000000000" .. 
+	"02000000" .. "0100a0de976cd111827100a02442df7d" .. "0100" .. "0000" .. "01000000" .. "0000000000000000000000000000000000000000" .. "01000000")
+
+	stdnse.tohex(host.bin_ip_src)
+	stdnse.tohex(host.ip)
+	stdnse.tohex(typeData.udpLength)
+	stdnse.tohex(typeData.udpLength)
+	stdnse.tohex(typeData.sport)
+	stdnse.tohex(typeData.dport)
+
+	print(stdnse.tohex(host.bin_ip_src))
+
+	local pseudoheader = "11" .. stdnse.tohex(host.bin_ip_src) .. stdnse.tohex(host.bin_ip) .. stdnse.tohex(typeData.udpLength).. stdnse.tohex(typeData.udpLength) .. stdnse.tohex(typeData.sport) .. stdnse.tohex(typeData.dport) .. rpcpackt
+
+	--ippackt = stdnse.fromhex("45" .. "00" ..typeData[ipLength] ..typeData[ident_nmb] .. "0000" .. "80" .. "11" .. --[[checksum]])
+	--udppackt:udp_count_checksum()
+	-- make payload a odd number
+	if not (#pseudoheader % 2)   then pseudoheader = pseudoheader.. "00" end
+
+	local checksum = CRC(pseudoheader, #pseudoheader)
+
+	local payload = udppackt .. checksum .. rpcpackt
+
+
+
+	local identnmb, err = stdnse.tohex(typeData.ident_nmb)
+	stdnse.debug(1, "Error at building packet, parsing Identification Number. Reason: %s", err)
+	
+	while #identnmb < 4 do
+		identnmb = "0" .. identnmb
 	end
-	return checksum
-end
-
-calcUdpCheckSum = function(data, length)
-
--- build pseudo header
-
--- call calcCheckSum
-local count = 0
-local tmp = 0
-local checksum = 0
-
-	for count = 0, #data, 2 do
 	
-	print(data[count])
-	print(data[1+ count])
-	
-	tmp = stdnse.fromhex(data:sub(count,count+1))  
 
+	local iplength, err = stdnse.tohex(typeData.ipLength)
+	stdnse.debug(1, "Error at building packet, parsing ip length. Reason: %s", err)
 
-print(data:sub(count,count+1))
-print(stdnse.fromhex(data:sub(count,count+1)))
-print(tmp)
-		local diff = 65535 - checksum
-
-		checksum =checksum + tmp
-
-
-
-		if tmp > diff then 
-			checksum = checksum +1 
-		end
-	
+	while #iplength < 4 do
+		iplength = "0" .. iplength
 	end
-	return ~checksum 
+
+	ippackt = "45" .. "00" ..iplength .. identnmb .. "2000" .. "0000" .. "80" .. "11" -- checksum
+
+	  
+	local tmppacket = ippackt .. "0000" .. stdnse.tohex(host.bin_ip_src) .. stdnse.tohex(host.bin_ip)
+	checksum = CRC(tmppacket  , #ippackt)
+	print("\nip checksum:  " ..checksum)
+	ippackt = ippackt .. stdnse.tohex(checksum) ..stdnse.tohex(host.bin_ip_src) .. stdnse.tohex(host.bin_ip) .. payload
+
+
+	--ippackt = ippackt:build_ip_packet(host.bin_ip_src, host.bin_ip, payload, 0x00 , typeData.ident_nmb, 0, 0, 128, 4)
+
+	print("\n\n" ..ippackt)
+	print_hex(ippackt)
+
+	typeData.ident_nmb = typeData.ident_nmb+1
+
+	return ippackt
 end
 
 
 
-buildPacket = function(host, port, typeData)
---[[local ippackt = packet.Frame:new()
-local udppackt = packet.Frame:new()
-local rpcpackt = packet.Frame:new()
---]]
-
-local ippackt, udppackt, rpcpackt
-
-print(typeData.sport)
---[[ version 4
-ippackt:ip_set_bin_dst(host.ip)
-ippackt:ip_set_bin_src(host.bin_ip_src)
-ippackt:ip_set_hl(5) -- default ip header
-ippackt:ip_set_id(typeData[ident_nmb])
-ippackt:ip_set_len(typeData[ipLength])
- may checksum / lets see later
---]]
-
---[[
-udppackt:udp_set_sport(typeData.sport)
-udppackt:udp_set_dport(typeData.dport)
-udppackt:udp_set_length(typeData.udpLength)
---]]
-
-udppackt = stdnse.tohex(typeData.sport) .. stdnse.tohex(typeData.dport) .. stdnse.tohex(typeData.udpLength)
 
 
-
-
-rpcpackt = stdnse.fromhex("04" .. "00" .. "2000" .. "100000" .. "00" .. "00000000000000000000000000000000" .. "0883afe11f5dc91191a408002b14a0fa" .. "01000000010001000100000100010001" .. "00000000" .."03000000" ..
-"03000000" .. "0200" .. "ffff" .. "ffff" .. "4c00" .. "0000" .. "00" .. "00" .. "00000000" .. "01000000" .. "00000000000000000000000000000000" .. 
-"02000000" .. "0100a0de976cd111827100a02442df7d" .. "0100" .. "0000" .. "01000000" .. "0000000000000000000000000000000000000000" .. "01000000")
-
-stdnse.tohex(host.bin_ip_src)
-stdnse.tohex(host.ip)
-stdnse.tohex(typeData.udpLength)
-stdnse.tohex(typeData.udpLength)
-stdnse.tohex(typeData.sport)
-stdnse.tohex(typeData.dport)
-
-
-local pseudoheader = "11" .. host.bin_ip_src .. host.ip .. stdnse.tohex(typeData.udpLength) .. stdnse.tohex(typeData.udpLength) .. typeData.sport .. typeData.dport .. rpcpackt
-
---ippackt = stdnse.fromhex("45" .. "00" ..typeData[ipLength] ..typeData[ident_nmb] .. "0000" .. "80" .. "11" .. --[[checksum]])
---udppackt:udp_count_checksum()
-if not (#pseudoheader % 2)   then pseudoheader = pseudoheader.. "00" end
-print(pseudoheader)
-
-
-print_hex(pseudoheader)
-local checksum = CRC(pseudoheader, #pseudoheader+8)
-
-local payload = udppackt .. checksum .. rpcpackt
-
--- make payload a odd number
-
-
-
-print_hex(payload)
-
-
-ippackt:build_ip_packet(host.bin_ip_src, host.ip, payload, 0x00 , typeData[ident_nmb], 0, 0, 128, 4)
-
-typeData[ident_nmb] = typeData[ident_nmb]+1
-
-return ippackt
-end
 
 -- open ip socket and send an ip packet with udp packetload with rpc packetload
 -- try out 
@@ -265,29 +235,48 @@ action = function(host,port)
 
 print("action")
 local IANA_PNIO_EPM_PORT = 34964
+
+local IP_UDP_RPC_PACKETSIZE = 198
 local UDP_RPC_EPM_PACKETSIZE = 164
 local UDP_RPC_IM_PACKETSIZE = 172
 
-local typeData = {ident_nmb = 0}
+local typeData = {}
  
 local socket = nmap.new_socket("udp")
-local ident_nmb = 0
+local dnet = nmap.new_dnet()
 
+typeData.ident_nmb = 0
 typeData.sport = IANA_PNIO_EPM_PORT
 typeData.dport = IANA_PNIO_EPM_PORT
 typeData.udpLength = UDP_RPC_IM_PACKETSIZE
+typeData.ipLength = IP_UDP_RPC_PACKETSIZE
 
 
 
 --table.insert(typeData, dport,IANA_PNIO_EPM_PORT)
 --table.insert(typeData, udpLength,IANA_PNIO_EPM_PORT)
 
-local packt = buildPacket(host, port, typeData)
+local packt = buildPacket(host,typeData)
+
+print_hex(packt)
+
+--[[
+dnet:ip_open()
+dnet:ip_send(packt, host.bin_ip)
+dnet:ip_close()
+--]]
 
 socket:bind(nil, IANA_PNIO_EPM_PORT)
-socket:sendto( host, port, packt )
+socket:connect(host, IANA_PNIO_EPM_PORT, "udp")
+socket:send( packt )
 socket:close()
 
+--[[
+-- doesn't need admin
+socket:bind(nil, IANA_PNIO_EPM_PORT)
+socket:sendto( host, IANA_PNIO_EPM_PORT, packt )
+socket:close()
+--]]
 
 
 end
