@@ -12,7 +12,9 @@ description = [[ This script sends a
 
 ---
 -- @usage
---	nmap -e <interface> --script pn_discovery
+-- if the file is somewhere in the file system
+-- nmap  --script <path>\pn_discovery
+-- if the file is in nmap\scripts
 -- nmap --script pn_discovery
 
 
@@ -70,13 +72,7 @@ build_eth_frame= function(iface)
 	local eth_packet
 	local src_mac = iface.mac
 	
-	
 
-	
-	
-
-	
-	
 	local dest_mac = packet.mactobin(pn_dcp_multicast)
 	local eth_proto = bin.pack("S", 0x9288)
 	local blockData = bin.pack("SCCISSCC", 0xfefe, 0x05,0x00,0x10000010, 0x0400, 0x0400,0xff, 0xff)
@@ -121,18 +117,6 @@ parse_pndcp = function(eth_data, pn_data)
 	pos, deviceMacAddress = bin.unpack("HC",eth_data, pos)
 	local tmp = deviceMacAddress
 
-
---[[ creates a nil value for deviceMacAddress
-for i = 0, 4, 1 do
-pos, deviceMacAddress = bin.unpack("HC",eth_data, pos)
-tmp = tmp .. ':'..deviceMacAddress
-print(pos)
-print(tmp)
-end
---]]
-
-
-
 	for pos = 8, 12, 1 do
 		_, deviceMacAddress = bin.unpack("HC",eth_data, pos)
 		tmp = tmp.. ':' .. deviceMacAddress
@@ -141,7 +125,13 @@ end
 	
 	stdnse.debug(1, "Device MAC address: %s", deviceMacAddress)
 
-
+	-- check if the packet is a request
+	local serviceType 
+	_, serviceType= bin.unpack("C", pn_data, 4)
+	stdnse.debug(1, "%x", serviceType)
+	if (serviceType == 0) then return end 
+	
+	
 	-- start extrating data from pn_dcp_response -- start with 1
 	pos = 11
 	local gesDCPDataLength = "" 
@@ -314,6 +304,7 @@ end
 					_, tmp = bin.unpack("HC",pn_data, pos)
 					vendorId = vendorId .. tmp
 				end
+				vendorId = "0x" .. vendorId
 				
 				pos = endOfVal +1
 				endOfVal = endOfVal + 2
@@ -322,6 +313,9 @@ end
 					_, tmp = bin.unpack("HC",pn_data, pos)
 					deviceId = deviceId .. tmp
 				end
+				
+				deviceId = "0x" .. deviceId
+				
 				pos = endOfVal
 
 
@@ -435,15 +429,15 @@ discoverThread = function(iface, pn_dcp, devices)
 	local condvar = nmap.condvar(devices)
 	local dnet = nmap.new_dnet()
 	local pcap_s = nmap.new_socket()
-	pcap_s:set_timeout(4000)
+	pcap_s:set_timeout(2000)
 	dnet:ethernet_open(iface.device)
 	pcap_s:pcap_open(iface.device, 256, false, "ether proto 0x8892")
 	
 	local status, ethData, length, pn_data
 	 
 	dnet:ethernet_send(pn_dcp)	-- send the frame
-	 
-	status, length, ethData, pn_data = pcap_s:pcap_receive()  -- first is my call
+	
+	status = true
 	while status do
 		status, length, ethData, pn_data = pcap_s:pcap_receive()
 	 
