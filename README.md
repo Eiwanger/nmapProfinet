@@ -1,2 +1,3 @@
 # nmapProfinet
-I am trying to create a nmap script to discover profinet devices in a lokal subnet
+The script discovers profinet devices in the local subnet and retrieves information about them.
+It uses a profinet DCP (Discovery and Configuration Protocol) call with the ethernet multicast mac address and the service identify and parses the answer.
